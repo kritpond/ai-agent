@@ -1,0 +1,19 @@
+# Crypto research agent — starter configuration.
+# Spot-only, paper/research only. No live order execution is implemented.
+exchange: okx
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+base_timeframe: 30m
+higher_timeframes: [1h, 2h, 4h]
+lookback_days: 365
+initial_balance: 10000.0
+fees_bps: 10.0       # per side; replace with your actual fee tier
+slippage_bps: 5.0    # assumed per side; stress-test this value
+risk_per_trade_pct: 0.005
+max_position_pct: 0.25
+stop_atr_multiple: 1.8
+take_profit_atr_multiple: 3.0
+min_confidence: 0.55
+journal_dir: obsidian/Trade Journal
