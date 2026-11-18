@@ -1,12 +1,12 @@
-# Binance USD-M Futures Testnet settings. Not used by the existing spot agent.
+# Conservative BTC USD-M Futures Testnet configuration
 symbols:
   - BTC/USDT:USDT
-  - ETH/USDT:USDT
-  - SOL/USDT:USDT
 lookback_days: 14
 poll_seconds: 60
-leverage: 3                 # hard-coded maximum in the agent: 5x
-risk_per_trade_pct: 0.0025  # equity risk estimated to the ATR stop, before gaps/slippage
+base_timeframe: 15m
+higher_timeframes: [30m, 1h, 2h]
+leverage: 2
+risk_per_trade_pct: 0.0025
 max_notional_equity_pct: 0.15
 max_daily_loss_pct: 0.02
 stop_atr_multiple: 1.5
