@@ -1,30 +1,21 @@
 # Binance USD-M Futures Testnet agent
 
-This experimental agent trades only **BTC/USDT:USDT** on Binance USD-M Futures Testnet.
+This experimental agent targets **BTC/USDT:USDT on Binance Futures Testnet only**.
 
-## Safety boundaries
+## Safety
 
-- Uses only Binance Futures Testnet sandbox endpoints.
-- Default mode is scan-only. Execution requires `--execute-testnet` and `BINANCE_TESTNET=1`.
-- Credentials are read only from `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`.
-- Isolated margin, 2x default leverage, one position, ATR stop/target sizing, and a 2% daily loss entry halt are enabled.
-- Entry and exchange-side reduce-only stop/target orders are reconciled on startup and after each loop.
-- If a saved position is no longer open, the agent records reconciliation and clears local state.
-- If an exchange position exists without matching local state, the agent stops and requires manual reconciliation.
-- Local state and trade events are under ignored `data/`.
-- Testnet only; no profitability claim.
+- Scan-only is the default. Orders require `--execute-testnet`, `BINANCE_TESTNET=1`, and testnet-only API credentials.
+- API keys are loaded from `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET` environment variables.
+- The agent uses sandbox mode unconditionally; it has no production endpoint mode.
+- One position at a time, isolated margin, 2x default leverage, capped notional/risk, and exchange-side reduce-only stop/target orders.
+- The agent stores state immediately after an entry fill, reconciles it against the exchange, and preserves existing protective orders during polling.
+- Testnet is for engineering checks, not a profitability claim. A network or exchange failure may still require manual account review.
 
-## Strategy
+## Strategy and data
 
-The 15-minute closed candle is the entry timeframe. Higher-timeframe confirmation is 30m, 1h, and 2h. The latest candle must be closed before a signal is used.
+Entry timeframe is 15m; confirmation timeframes are 30m, 1h, and 2h. OHLCV retrieval is paginated; unfinished candles are excluded.
 
-## Data handling
-
-OHLCV requests are paginated until the requested lookback is exhausted. No candle that is still forming is used.
-
-## Run
-
-Windows PowerShell:
+## Setup / scan
 
 ```powershell
 py -m venv .venv
@@ -33,7 +24,15 @@ python -m pip install -r trade_requirements.txt
 python binance_futures_testnet_agent.py
 ```
 
-Execution mode:
+## Test suite (mock exchange; no network orders)
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+## Testnet execution (will submit test orders)
+
+Only after mock tests pass and you have verified the account is the Binance USD-M Futures Testnet account:
 
 ```powershell
 $env:BINANCE_FUTURES_TESTNET_API_KEY='your-testnet-key'
@@ -42,10 +41,4 @@ $env:BINANCE_TESTNET='1'
 python binance_futures_testnet_agent.py --execute-testnet
 ```
 
-Never use production credentials or commit credentials. If a key was previously exposed, revoke and rotate it before testing.
-
-## Tests
-
-```powershell
-python -m unittest discover -s tests -v
-```
+Never use production keys or commit credentials. Revoke any key previously exposed in chat. This agent can submit real orders to the test environment when explicitly enabled.
