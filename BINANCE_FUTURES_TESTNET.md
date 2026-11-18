@@ -1,37 +1,41 @@
-# Binance USD-M Futures Testnet agent
+# Binance USD-M Futures Testnet multi-timeframe research agent
 
-This experimental agent scans and trades **BTC/USDT, ETH/USDT, and SOL/USDT perpetual futures on Binance Futures Testnet only**.
+This experimental agent is **Testnet-only** and scans BTC/USDT, ETH/USDT, and SOL/USDT perpetual futures. It is not financial advice or a promise of profit. Leverage can lose test funds quickly; the same strategy may perform differently live.
 
-## Safety
+## Strategy outline
 
-- Scan-only is the default. Orders require `--execute-testnet`, `BINANCE_TESTNET=1`, and Testnet-only API credentials.
-- API keys are loaded from `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET` environment variables.
-- CCXT sandbox mode is enabled unconditionally; the application has no production endpoint mode.
-- Leverage is configured to 2x (maximum allowed configuration is 5x); isolated margin, risk/notional caps, daily loss halt, and exchange-side reduce-only stop/target orders are enabled.
-- The agent scans all configured symbols and can hold **one position total at a time**, selecting the highest-confidence new signal. It does not open three simultaneous positions.
-- State is persisted after fills and reconciled with exchange positions across all configured symbols. A position not represented in local state halts execution for manual reconciliation.
-- A Testnet key and balance are required for order execution. Network/API failures may require manual account review.
-- Testnet results are not a profitability claim. Never use production keys or commit credentials; revoke any key previously exposed.
+- 5m closed-candle entries; confirmation from closed 10m, 30m, 1h, and 2h bars.
+- Causal indicators: EMA trend structure, RSI, MACD histogram, ADX/directional movement, ATR, Bollinger-band standardized deviation, and relative volume.
+- Multi-timeframe weighted agreement, minimum confidence, volume and volatility gates; ATR-sized stop/target levels.
+- One position total across configured symbols, isolated margin, 2x default leverage (hard config maximum 5x), notional/risk limits, and daily loss entry halt.
+- OHLCV history is paginated; unfinished bars are excluded. Exchange-side reduce-only stop/target orders are intended as protection; inspect actual open orders and positions.
 
-## Setup and scan-only mode (no orders)
+## News and external data
+
+This version does **not** consume news or social sentiment. There is no configured, licensed, timestamped provider or stale-data policy, so fabricating a news score would be unsafe. Add a provider only with explicit source, timestamps, failure behavior, and backtestable historical data. Funding/open-interest signals also require separate validation before they can affect orders.
+
+## Install / test (Windows PowerShell)
+
+Use stable 64-bit Python 3.11 or later; avoid prerelease/alpha Python versions.
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r trade_requirements.txt
-python -m unittest discover -s tests -v
-python binance_futures_testnet_agent.py
+.\.venv\Scripts\python.exe -m pip install -r trade_requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe binance_futures_testnet_agent.py
 ```
 
-## Execute on Futures Testnet
+The default command is scan-only and submits no orders.
 
-Only after tests pass, verify the Binance Futures Testnet account, create a Testnet key, and confirm the configured 2x leverage/risk limits. Never paste keys into chat or source files.
+## Futures Testnet execution
+
+Only after tests pass, verify you are using Binance Futures Testnet credentials and understand the risk controls. Keep the key local; never paste it into chat or commit it.
 
 ```powershell
 $env:BINANCE_FUTURES_TESTNET_API_KEY='your-testnet-key'
 $env:BINANCE_FUTURES_TESTNET_API_SECRET='your-testnet-secret'
 $env:BINANCE_TESTNET='1'
-python binance_futures_testnet_agent.py --execute-testnet
+.\.venv\Scripts\python.exe binance_futures_testnet_agent.py --execute-testnet
 ```
 
-The agent trades only when a new strategy signal meets the confidence threshold. It may remain idle if there is no signal. Press `Ctrl+C` to stop the process, then verify open positions/orders in the Testnet account; stopping the agent does not itself close an open position.
+The agent trades only after a new qualifying signal and may remain idle. `Ctrl+C` stops the process but does not guarantee a position is closed. Check Testnet positions and open orders directly. This code has not been validated for production use or profitability.

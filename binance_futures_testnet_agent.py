@@ -15,9 +15,9 @@ from trade_strategy import build_signals
 
 ROOT = Path(__file__).resolve().parent
 MAX_ALLOWED_LEVERAGE = 5
-BASE_TIMEFRAME = "15m"
-BASE_TIMEFRAME_MS = 15 * 60_000
-HIGHER_TIMEFRAMES = ("30m", "1h", "2h")
+BASE_TIMEFRAME = "5m"
+BASE_TIMEFRAME_MS = 5 * 60_000
+HIGHER_TIMEFRAMES = ("10m", "30m", "1h", "2h")
 ALLOWED_SYMBOLS = {"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"}
 
 
@@ -74,8 +74,8 @@ def closed_candles(exchange, symbol: str, days: int) -> pd.DataFrame:
     frame = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="ms", utc=True)
     frame = frame.drop_duplicates("timestamp").set_index("timestamp").sort_index()
-    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=15)
-    return frame.loc[frame.index + pd.Timedelta(minutes=15) <= cutoff].astype(float)
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=5)
+    return frame.loc[frame.index + pd.Timedelta(minutes=5) <= cutoff].astype(float)
 
 
 def read_state(path: Path) -> dict:
@@ -120,8 +120,8 @@ def scan(exchange, config: dict) -> dict[str, tuple[pd.DataFrame, pd.Series]]:
     found = {}
     for symbol in config["symbols"]:
         candles = closed_candles(exchange, symbol, int(config["lookback_days"]))
-        if len(candles) < 100:
-            print(f"Skip {symbol}: insufficient closed candles")
+        if len(candles) < 300:
+            print(f"Skip {symbol}: insufficient closed 5m candles")
             continue
         signals = build_signals(candles, BASE_TIMEFRAME, HIGHER_TIMEFRAMES)
         if not signals.empty:
@@ -143,8 +143,7 @@ def market_order(exchange, symbol: str, side: str, amount: float, reduce_only: b
 def cancel_protection(exchange, symbol: str) -> None:
     for order in exchange.fetch_open_orders(symbol):
         info = order.get("info") or {}
-        reduce_only = order.get("reduceOnly") or str(info.get("reduceOnly", "")).lower() == "true"
-        if reduce_only:
+        if order.get("reduceOnly") or str(info.get("reduceOnly", "")).lower() == "true":
             exchange.cancel_order(order["id"], symbol)
 
 
@@ -185,24 +184,18 @@ def reconcile_saved_position(exchange, state: dict, state_path: Path, log_path: 
         if untracked:
             raise RuntimeError(f"Untracked futures position(s) {untracked}; manual reconciliation required")
         return
-
     symbol = position["symbol"]
     live = live_positions[symbol]
     if live is None:
         cancel_protection(exchange, symbol)
-        append_log(log_path, {"event": "close", "symbol": symbol,
-                              "direction": position["direction"],
+        append_log(log_path, {"event": "close", "symbol": symbol, "direction": position["direction"],
                               "reason": "reconciled_exchange_position_closed",
                               "exit_time": datetime.now(timezone.utc).isoformat(), "testnet": True})
         state["position"] = None
         save_state(state_path, state)
-        print(f"Reconciled: exchange position for {symbol} is closed; stale protective orders canceled")
         return
-    if live["direction"] != position["direction"]:
-        raise RuntimeError("Saved direction differs from exchange position; manual reconciliation required")
-    if abs(live["contracts"] - float(position["qty"])) / max(live["contracts"], 1e-12) > 0.02:
-        raise RuntimeError("Saved quantity differs from exchange position; manual reconciliation required")
-
+    if live["direction"] != position["direction"] or abs(live["contracts"] - float(position["qty"])) / max(live["contracts"], 1e-12) > 0.02:
+        raise RuntimeError("Saved position differs from exchange position; manual reconciliation required")
     open_protection = []
     for order in exchange.fetch_open_orders(symbol):
         info = order.get("info") or {}
@@ -210,8 +203,8 @@ def reconcile_saved_position(exchange, state: dict, state_path: Path, log_path: 
             open_protection.append(order)
     if len(open_protection) < 2:
         cancel_protection(exchange, symbol)
-        placed = place_exchange_protection(exchange, symbol, position)
-        position["protection_order_ids"] = {key: value["id"] for key, value in placed.items()}
+        protection = place_exchange_protection(exchange, symbol, position)
+        position["protection_order_ids"] = {key: value["id"] for key, value in protection.items()}
         save_state(state_path, state)
 
 
@@ -221,11 +214,16 @@ def enter_position(exchange, symbol: str, row: pd.Series, direction: str, config
     stop_distance = float(row.atr) * float(config["stop_atr_multiple"])
     if price <= 0 or stop_distance <= 0:
         return
+    volatility = float(getattr(row, "volatility_pct", stop_distance / price))
+    if volatility > float(config.get("max_volatility_pct", 0.03)):
+        print(f"Skip {symbol}: volatility filter {volatility:.2%} exceeds limit")
+        return
     equity = account_equity(exchange)
     qty_risk = equity * float(config["risk_per_trade_pct"]) / stop_distance
     qty_cap = equity * float(config["max_notional_equity_pct"]) / price
     qty = float(exchange.amount_to_precision(symbol, min(qty_risk, qty_cap)))
-    min_cost = float(((exchange.market(symbol).get("limits") or {}).get("cost") or {}).get("min") or 0)
+    market = exchange.market(symbol)
+    min_cost = float(((market.get("limits") or {}).get("cost") or {}).get("min") or 0)
     if qty <= 0 or qty * price < min_cost or qty * price > free_margin(exchange) * int(config["leverage"]):
         print(f"Skip {symbol}: computed size violates exchange limits")
         return
@@ -245,11 +243,7 @@ def enter_position(exchange, symbol: str, row: pd.Series, direction: str, config
                 "entry_day": now.date().isoformat(), "entry_candle": row.name.isoformat()}
     state["position"] = position
     save_state(state_path, state)
-    try:
-        protection = place_exchange_protection(exchange, symbol, position)
-    except Exception:
-        append_log(log_path, {"event": "protection_error", **position, "testnet": True})
-        raise
+    protection = place_exchange_protection(exchange, symbol, position)
     position["protection_order_ids"] = {key: value["id"] for key, value in protection.items()}
     save_state(state_path, state)
     append_log(log_path, {"event": "open", **position, "entry_order_id": order["id"],
@@ -262,22 +256,18 @@ def close_position(exchange, reason: str, state: dict, state_path: Path, log_pat
     if not position:
         return
     cancel_protection(exchange, position["symbol"])
-    order = market_order(exchange, position["symbol"],
-                         "sell" if position["direction"] == "long" else "buy",
+    order = market_order(exchange, position["symbol"], "sell" if position["direction"] == "long" else "buy",
                          float(position["qty"]), reduce_only=True)
     price = float(order.get("average") or exchange.fetch_ticker(position["symbol"])["last"])
     move = price - float(position["entry"])
     if position["direction"] == "short":
         move = -move
-    pnl = move * float(position["qty"])
-    fee = float(config_value(state, "fees_bps", 10.0)) / 10_000
-    pnl -= (price + float(position["entry"])) * float(position["qty"]) * fee
-    append_log(log_path, {"event": "close", "symbol": position["symbol"],
-                          "direction": position["direction"], "qty": position["qty"],
-                          "entry": position["entry"], "exit": price,
+    qty = float(position["qty"])
+    pnl = move * qty - (price + float(position["entry"])) * qty * float(config_value(state, "fees_bps", 10.0)) / 10_000
+    append_log(log_path, {"event": "close", "symbol": position["symbol"], "direction": position["direction"],
+                          "qty": qty, "entry": position["entry"], "exit": price,
                           "estimated_net_pnl": pnl, "reason": reason,
-                          "exit_time": datetime.now(timezone.utc).isoformat(),
-                          "order_id": order["id"], "testnet": True})
+                          "exit_time": datetime.now(timezone.utc).isoformat(), "order_id": order["id"], "testnet": True})
     state["position"] = None
     save_state(state_path, state)
 
@@ -289,28 +279,25 @@ def config_value(state: dict, key: str, default):
 def run_loop(exchange, config: dict, state: dict, state_path: Path, log_path: Path) -> None:
     state.setdefault("config", {})["fees_bps"] = config.get("fees_bps", 10.0)
     reconcile_saved_position(exchange, state, state_path, log_path, config["symbols"])
-    print(f"TESTNET execution enabled: {', '.join(config['symbols'])}; one open position at a time; isolated margin; {config['leverage']}x leverage.")
+    print(f"TESTNET only: {', '.join(config['symbols'])}; 5m entries; 10m/30m/1h/2h confirmation; one position total; isolated {config['leverage']}x.")
     while True:
         try:
-            now = datetime.now(timezone.utc)
-            today = now.date().isoformat()
+            today = datetime.now(timezone.utc).date().isoformat()
             if state.get("position"):
                 reconcile_saved_position(exchange, state, state_path, log_path, config["symbols"])
             if state.get("position") and state["position"].get("entry_day") != today:
                 close_position(exchange, "utc_day_end", state, state_path, log_path)
             results = scan(exchange, config)
             if state.get("position"):
-                position = state["position"]
-                price = float(exchange.fetch_ticker(position["symbol"])["last"])
-                long = position["direction"] == "long"
-                if (price <= position["stop"] if long else price >= position["stop"]):
+                pos = state["position"]
+                ticker = float(exchange.fetch_ticker(pos["symbol"])["last"])
+                is_long = pos["direction"] == "long"
+                if (ticker <= pos["stop"] if is_long else ticker >= pos["stop"]):
                     close_position(exchange, "stop", state, state_path, log_path)
-                elif (price >= position["target"] if long else price <= position["target"]):
+                elif (ticker >= pos["target"] if is_long else ticker <= pos["target"]):
                     close_position(exchange, "target", state, state_path, log_path)
-                elif position["symbol"] in results:
-                    _, latest = results[position["symbol"]]
-                    if latest.name.isoformat() > position["entry_candle"] and str(latest.signal) == "exit":
-                        close_position(exchange, "strategy_exit", state, state_path, log_path)
+                elif pos["symbol"] in results and str(results[pos["symbol"]][1].signal) == "exit":
+                    close_position(exchange, "strategy_exit", state, state_path, log_path)
             else:
                 if state.get("utc_day") != today:
                     state["utc_day"] = today
@@ -337,7 +324,7 @@ def run_loop(exchange, config: dict, state: dict, state_path: Path, log_path: Pa
                         save_state(state_path, state)
             print(f"Checked {datetime.now(timezone.utc).isoformat()} UTC; sleeping {config['poll_seconds']}s")
         except KeyboardInterrupt:
-            print("Stopped. Inspect testnet account and state manually.")
+            print("Stopped. Inspect testnet positions/orders manually.")
             return
         except Exception as exc:
             print(f"Agent error (retry later): {type(exc).__name__}: {exc}")
@@ -345,21 +332,21 @@ def run_loop(exchange, config: dict, state: dict, state_path: Path, log_path: Pa
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Binance USD-M Futures Testnet agent")
+    parser = argparse.ArgumentParser(description="Binance USD-M Futures Testnet multi-timeframe agent")
     parser.add_argument("--config", default="binance_futures_testnet.yaml")
     parser.add_argument("--execute-testnet", action="store_true")
     args = parser.parse_args()
     config = load_config(args.config)
     exchange = make_testnet_exchange(authenticated=args.execute_testnet)
-    state_path = ROOT / config["state_file"]
-    log_path = ROOT / config["trade_log"]
+    state_path, log_path = ROOT / config["state_file"], ROOT / config["trade_log"]
     if args.execute_testnet:
         run_loop(exchange, config, read_state(state_path), state_path, log_path)
     else:
         for symbol, (_, latest) in scan(exchange, config).items():
             print(json.dumps({"symbol": symbol, "as_of": latest.name.isoformat(),
                               "signal": signal_direction(latest) or "hold",
-                              "confidence": float(latest.confidence), "close": float(latest.close)}, allow_nan=False))
+                              "confidence": float(latest.confidence), "close": float(latest.close),
+                              "atr": float(latest.atr), "volatility_pct": float(latest.volatility_pct)}, allow_nan=False))
         print("Scan only: no orders submitted. Use --execute-testnet for Futures Testnet orders.")
 
 

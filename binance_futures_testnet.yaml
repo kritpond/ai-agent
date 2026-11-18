@@ -4,16 +4,17 @@ symbols:
   - ETH/USDT:USDT
   - SOL/USDT:USDT
 lookback_days: 14
-poll_seconds: 60
-base_timeframe: 15m
-higher_timeframes: [30m, 1h, 2h]
+poll_seconds: 30
+base_timeframe: 5m
+higher_timeframes: [10m, 30m, 1h, 2h]
 leverage: 2
-risk_per_trade_pct: 0.0025
-max_notional_equity_pct: 0.15
-max_daily_loss_pct: 0.02
-stop_atr_multiple: 1.5
-take_profit_atr_multiple: 2.0
-min_confidence: 0.60
+risk_per_trade_pct: 0.001
+max_notional_equity_pct: 0.10
+max_daily_loss_pct: 0.015
+stop_atr_multiple: 1.8
+take_profit_atr_multiple: 2.2
+min_confidence: 0.65
+max_volatility_pct: 0.03
 fees_bps: 5.0
 state_file: data/binance_futures_testnet_state.json
 trade_log: data/binance_futures_testnet_trades.jsonl
