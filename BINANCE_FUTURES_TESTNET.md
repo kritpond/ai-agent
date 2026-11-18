@@ -5,14 +5,14 @@ This experimental agent is **Testnet-only** and scans BTC/USDT, ETH/USDT, and SO
 ## Strategy outline
 
 - 5m closed-candle entries; confirmation from closed 10m, 30m, 1h, and 2h bars.
-- Causal indicators: EMA trend structure, RSI, MACD histogram, ADX/directional movement, ATR, Bollinger-band standardized deviation, and relative volume.
-- Multi-timeframe weighted agreement, minimum confidence, volume and volatility gates; ATR-sized stop/target levels.
+- Causal indicators: EMA trend structure, RSI, MACD histogram normalized by each timeframe's ATR, ADX/directional movement, ATR, Bollinger excursion, and relative volume.
+- Multi-timeframe agreement and strength confidence index (0-1), relative-volume and volatility gates, plus ATR-sized stop/target levels. Confidence is a heuristic filter, **not** a probability of profit.
 - One position total across configured symbols, isolated margin, 2x default leverage (hard config maximum 5x), notional/risk limits, and daily loss entry halt.
 - OHLCV history is paginated; unfinished bars are excluded. Exchange-side reduce-only stop/target orders are intended as protection; inspect actual open orders and positions.
 
-## News and external data
+## Research limits / external data
 
-This version does **not** consume news or social sentiment. There is no configured, licensed, timestamped provider or stale-data policy, so fabricating a news score would be unsafe. Add a provider only with explicit source, timestamps, failure behavior, and backtestable historical data. Funding/open-interest signals also require separate validation before they can affect orders.
+This version does **not** consume news or social sentiment. It has no licensed, timestamped news provider or historical point-in-time news archive, so it does not fabricate a news score. Funding/open-interest signals are also not used until separately validated with historical data. No profitability claim is made; evaluate realistic fees, slippage, out-of-sample performance, and testnet behavior before considering any real-money use.
 
 ## Install / test (Windows PowerShell)
 

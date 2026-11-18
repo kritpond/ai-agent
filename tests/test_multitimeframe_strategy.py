@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 
-from trade_strategy import build_signals, indicators
+from trade_strategy import build_signals
 
 
 class MultiTimeframeStrategyTests(unittest.TestCase):
@@ -25,18 +25,23 @@ class MultiTimeframeStrategyTests(unittest.TestCase):
             self.assertIn(f"score_{timeframe}", result)
             self.assertTrue(np.isfinite(result[f"score_{timeframe}"].dropna()).all())
         self.assertTrue(result.signal.isin(["buy", "sell", "exit", "hold"]).all())
-        self.assertTrue((result.confidence.between(0, 1)).all())
+        self.assertTrue(result.confidence.between(0, 1).all())
+        # A persistent synthetic trend should be able to clear the configured confidence gate.
+        self.assertGreater(float(result.confidence.max()), 0.65)
 
     def test_higher_timeframe_values_are_not_available_before_close(self):
         result = build_signals(self.make_candles(2000), "5m", ("10m", "30m", "1h", "2h"))
-        # Every result index labels the close of its base candle; the 10m source bar
-        # must not be timestamped after the latest closed source candle.
         self.assertTrue(result.index.is_monotonic_increasing)
         self.assertTrue(result.index.is_unique)
+        self.assertTrue((result.index.minute % 5 == 0).all())
 
     def test_invalid_weight_config_is_rejected(self):
         with self.assertRaises(ValueError):
             build_signals(self.make_candles(2000), "5m", ("10m", "30m", "1h", "2h"), {"5m": 1})
+
+    def test_duplicate_higher_timeframe_is_rejected(self):
+        with self.assertRaises(ValueError):
+            build_signals(self.make_candles(1000), "5m", ("10m", "10m"))
 
 
 if __name__ == "__main__":
