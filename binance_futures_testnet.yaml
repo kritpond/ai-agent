@@ -4,7 +4,7 @@ symbols:
   - ETH/USDT:USDT
   - SOL/USDT:USDT
 lookback_days: 14
-poll_seconds: 30
+poll_seconds: 60
 base_timeframe: 5m
 higher_timeframes: [10m, 30m, 1h, 2h]
 leverage: 2

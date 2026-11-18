@@ -26,22 +26,25 @@ class MultiTimeframeStrategyTests(unittest.TestCase):
             self.assertTrue(np.isfinite(result[f"score_{timeframe}"].dropna()).all())
         self.assertTrue(result.signal.isin(["buy", "sell", "exit", "hold"]).all())
         self.assertTrue(result.confidence.between(0, 1).all())
-        # A persistent synthetic trend should be able to clear the configured confidence gate.
         self.assertGreater(float(result.confidence.max()), 0.65)
 
-    def test_higher_timeframe_values_are_not_available_before_close(self):
+    def test_higher_timeframe_data_only_appears_at_closed_bar_times(self):
         result = build_signals(self.make_candles(2000), "5m", ("10m", "30m", "1h", "2h"))
         self.assertTrue(result.index.is_monotonic_increasing)
         self.assertTrue(result.index.is_unique)
         self.assertTrue((result.index.minute % 5 == 0).all())
 
-    def test_invalid_weight_config_is_rejected(self):
+    def test_invalid_weights_are_rejected(self):
         with self.assertRaises(ValueError):
             build_signals(self.make_candles(2000), "5m", ("10m", "30m", "1h", "2h"), {"5m": 1})
 
-    def test_duplicate_higher_timeframe_is_rejected(self):
+    def test_duplicate_higher_timeframes_are_rejected(self):
         with self.assertRaises(ValueError):
             build_signals(self.make_candles(1000), "5m", ("10m", "10m"))
+
+    def test_legacy_timeframe_strategy_remains_supported(self):
+        result = build_signals(self.make_candles(4000), "15m", ("30m", "1h", "2h"))
+        self.assertIn("score_15m", result)
 
 
 if __name__ == "__main__":
