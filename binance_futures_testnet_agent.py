@@ -18,6 +18,7 @@ MAX_ALLOWED_LEVERAGE = 5
 BASE_TIMEFRAME = "15m"
 BASE_TIMEFRAME_MS = 15 * 60_000
 HIGHER_TIMEFRAMES = ("30m", "1h", "2h")
+ALLOWED_SYMBOLS = {"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"}
 
 
 def load_config(path: str) -> dict:
@@ -28,8 +29,11 @@ def load_config(path: str) -> dict:
     leverage = int(config["leverage"])
     if not 1 <= leverage <= MAX_ALLOWED_LEVERAGE:
         raise ValueError(f"leverage must be between 1 and {MAX_ALLOWED_LEVERAGE}x")
-    if config.get("symbols") != ["BTC/USDT:USDT"]:
-        raise ValueError("This conservative version only allows BTC/USDT:USDT")
+    symbols = config.get("symbols")
+    if not isinstance(symbols, list) or not symbols:
+        raise ValueError("Configure at least one supported futures symbol")
+    if len(symbols) != len(set(symbols)) or any(symbol not in ALLOWED_SYMBOLS for symbol in symbols):
+        raise ValueError(f"symbols must be unique entries from {sorted(ALLOWED_SYMBOLS)}")
     return config
 
 
@@ -171,14 +175,19 @@ def exchange_position(exchange, symbol: str) -> dict | None:
     return None
 
 
-def reconcile_saved_position(exchange, state: dict, state_path: Path, log_path: Path) -> None:
+def reconcile_saved_position(exchange, state: dict, state_path: Path, log_path: Path,
+                             symbols: list[str] | None = None) -> None:
     position = state.get("position")
-    symbol = position["symbol"] if position else "BTC/USDT:USDT"
-    live = exchange_position(exchange, symbol)
+    symbols_to_check = [position["symbol"]] if position else (symbols or sorted(ALLOWED_SYMBOLS))
+    live_positions = {symbol: exchange_position(exchange, symbol) for symbol in symbols_to_check}
     if not position:
-        if live:
-            raise RuntimeError(f"Untracked futures position on {symbol}; manual reconciliation required")
+        untracked = {symbol: live for symbol, live in live_positions.items() if live}
+        if untracked:
+            raise RuntimeError(f"Untracked futures position(s) {untracked}; manual reconciliation required")
         return
+
+    symbol = position["symbol"]
+    live = live_positions[symbol]
     if live is None:
         cancel_protection(exchange, symbol)
         append_log(log_path, {"event": "close", "symbol": symbol,
@@ -187,15 +196,13 @@ def reconcile_saved_position(exchange, state: dict, state_path: Path, log_path: 
                               "exit_time": datetime.now(timezone.utc).isoformat(), "testnet": True})
         state["position"] = None
         save_state(state_path, state)
-        print("Reconciled: exchange position is closed; stale protective orders canceled")
+        print(f"Reconciled: exchange position for {symbol} is closed; stale protective orders canceled")
         return
     if live["direction"] != position["direction"]:
         raise RuntimeError("Saved direction differs from exchange position; manual reconciliation required")
     if abs(live["contracts"] - float(position["qty"])) / max(live["contracts"], 1e-12) > 0.02:
         raise RuntimeError("Saved quantity differs from exchange position; manual reconciliation required")
 
-    # Keep existing exchange-side protection in place. Restore both only when fewer
-    # than two reduce-only orders remain (e.g. after one trigger executed).
     open_protection = []
     for order in exchange.fetch_open_orders(symbol):
         info = order.get("info") or {}
@@ -236,7 +243,6 @@ def enter_position(exchange, symbol: str, row: pd.Series, direction: str, config
     position = {"symbol": symbol, "direction": direction, "qty": filled, "entry": entry,
                 "stop": stop, "target": target, "entry_time": now.isoformat(),
                 "entry_day": now.date().isoformat(), "entry_candle": row.name.isoformat()}
-    # Persist immediately after fill so a restart can recover if protection placement fails.
     state["position"] = position
     save_state(state_path, state)
     try:
@@ -248,6 +254,7 @@ def enter_position(exchange, symbol: str, row: pd.Series, direction: str, config
     save_state(state_path, state)
     append_log(log_path, {"event": "open", **position, "entry_order_id": order["id"],
                           "leverage": int(config["leverage"]), "testnet": True})
+    print(f"TESTNET {direction.upper()} {symbol} qty={filled:g} leverage={config['leverage']}x")
 
 
 def close_position(exchange, reason: str, state: dict, state_path: Path, log_path: Path) -> None:
@@ -281,14 +288,14 @@ def config_value(state: dict, key: str, default):
 
 def run_loop(exchange, config: dict, state: dict, state_path: Path, log_path: Path) -> None:
     state.setdefault("config", {})["fees_bps"] = config.get("fees_bps", 10.0)
-    reconcile_saved_position(exchange, state, state_path, log_path)
-    print("TESTNET execution enabled: BTC/USDT:USDT, 15m, isolated margin.")
+    reconcile_saved_position(exchange, state, state_path, log_path, config["symbols"])
+    print(f"TESTNET execution enabled: {', '.join(config['symbols'])}; one open position at a time; isolated margin; {config['leverage']}x leverage.")
     while True:
         try:
             now = datetime.now(timezone.utc)
             today = now.date().isoformat()
             if state.get("position"):
-                reconcile_saved_position(exchange, state, state_path, log_path)
+                reconcile_saved_position(exchange, state, state_path, log_path, config["symbols"])
             if state.get("position") and state["position"].get("entry_day") != today:
                 close_position(exchange, "utc_day_end", state, state_path, log_path)
             results = scan(exchange, config)
@@ -338,7 +345,7 @@ def run_loop(exchange, config: dict, state: dict, state_path: Path, log_path: Pa
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="BTC/USDT Binance USD-M Futures Testnet agent")
+    parser = argparse.ArgumentParser(description="Binance USD-M Futures Testnet agent")
     parser.add_argument("--config", default="binance_futures_testnet.yaml")
     parser.add_argument("--execute-testnet", action="store_true")
     args = parser.parse_args()

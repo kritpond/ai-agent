@@ -1,6 +1,8 @@
-# Conservative BTC USD-M Futures Testnet configuration
+# Conservative USD-M Futures Testnet configuration
 symbols:
   - BTC/USDT:USDT
+  - ETH/USDT:USDT
+  - SOL/USDT:USDT
 lookback_days: 14
 poll_seconds: 60
 base_timeframe: 15m
